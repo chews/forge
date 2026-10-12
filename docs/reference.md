@@ -71,10 +71,10 @@ needle decision. See [Skills](#skills).)
 inference needs the native engine, and the engine is **on by default**: the
 build fetches and checksum-verifies it automatically for the platforms forge
 has verified, so the prebuilt release binaries for `aarch64-apple-darwin` and
-`aarch64-unknown-linux-gnu` — and a plain `cargo build` on those machines —
-come with a working brain. Intel macOS, x86_64 Linux and Windows get a
-statically-routing binary (the build warns once and continues engine-less),
-because no linkable engine exists for them yet.
+`aarch64-unknown-linux-gnu` — and a plain `cargo build` on those machines, or
+on x86_64 Linux with LLVM's libc++ 21+ installed — come with a working brain.
+Intel macOS and Windows get a statically-routing binary (the build warns once
+and continues engine-less), because no linkable engine exists for them yet.
 That is a supported configuration and fully usable, not a degraded one: you
 get deterministic static routing instead of the on-device model, and you give
 up the direct-dispatch fast path and the local semantic index
@@ -194,9 +194,11 @@ build instead of shipping, and CI runs each asset and asserts it really reports
 the engine before publishing. The `cargo install` fallback gets the brain too —
 the engine is fetched and checksum-verified by `needle-sys`'s build script on
 every build; if it cannot be fetched, the install retries engine-less, so a bad
-network never costs you the install. Intel macOS, x86_64 Linux and Windows get a
-statically-routing binary, because no linkable engine exists for them yet (see
-[Embedded Needle brain](#embedded-needle-brain) for exactly why each);
+network never costs you the install. On x86_64 Linux, `cargo install` links the
+brain when LLVM's libc++ 21+ is installed (the release asset for that target is
+still built brain-less, pending a CI image with that libc++). Intel macOS and
+Windows get a statically-routing binary, because no linkable engine exists for
+them yet (see [Embedded Needle brain](#embedded-needle-brain) for exactly why each);
 `forge doctor` says which one you have on its `needle engine` line.
 
 Brain-enabled assets need nothing extra installed to run — the C++ runtime is
@@ -2151,6 +2153,7 @@ verified and whose link has been exercised:
 | --- | --- |
 | `aarch64-apple-darwin` | `macos-arm64` |
 | `aarch64-unknown-linux-gnu` | `linux-arm64` |
+| `x86_64-unknown-linux-gnu` | `linux-x86_64` (needs libc++ 21+, below) |
 
 The pinned checksums live in `PINNED_ENGINES` in
 `crates/needle-sys/build_support.rs`, together with the collected-but-unwired
@@ -2159,12 +2162,13 @@ checksums for the rest and the reason each is held back:
 - **Intel macOS: no engine exists.** There is no `macos-x86_64` folder in the
   repo at all. Builds for that target always resolve engine-less — they warn
   once at build time and forge routes statically.
-- **x86_64 Linux and x86_64 Windows: the archive cannot be linked.** Both leave
-  `std::__1::__hash_memory` undefined, and no distributed libc++ defines it
-  (checked across libc++ 18 and 20, dev and runtime, static and shared). That
-  symbol lives only inside Cactus's own libc++ build, which they ship
-  pre-linked inside their Python wheel's `.so` and do not publish separately.
-  The arm64 archives have no such problem.
+- **x86_64 archives need libc++ 21 or newer.** Both `linux-x86_64` and
+  `windows-x86_64` leave `std::__1::__hash_memory` undefined. libc++ moved that
+  function out of line in LLVM 21, so distro libc++ 18/20 cannot link the
+  engine but LLVM's own `libc++-21-dev` (apt.llvm.org) can. The build reads
+  this requirement from the archive and only uses a libc++ that defines it;
+  with none installed it continues engine-less with one warning naming the
+  packages, never a link error. The arm64 archives have no such requirement.
 - **Windows also** publishes `libneedle.a` (a COFF `ar` archive) rather than the
   `needle.lib` an MSVC `-lneedle` resolves, and needs a libc++ MSVC has not got.
 - **armv7/riscv64:** no forge target builds them, so the link is unexercised.
@@ -2183,6 +2187,17 @@ So on Linux, linking the engine needs libc++'s development files:
 ```bash
 sudo apt-get install libc++-dev libc++abi-dev     # Debian/Ubuntu
 sudo dnf install libcxx-devel libcxxabi-devel     # Fedora
+```
+
+On **x86_64 Linux** that libc++ must be 21 or newer (see above). On Ubuntu
+24.04, from LLVM's apt repository:
+
+```bash
+sudo install -d /etc/apt/keyrings
+curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/keyrings/apt.llvm.org.asc >/dev/null
+echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.asc] http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" \
+  | sudo tee /etc/apt/sources.list.d/llvm-21.list
+sudo apt-get update && sudo apt-get install libc++-21-dev libc++abi-21-dev
 ```
 
 forge links them **statically**, so the binary you get has no libc++ runtime
@@ -2204,6 +2219,16 @@ Environment knobs:
 | `NEEDLE_ENGINE_BASE_URL` | fetch from a mirror instead of Hugging Face (same bytes: the checksum is not overridable) |
 | `NEEDLE_ENGINE_CACHE_DIR` | where verified engines are cached |
 | `NEEDLE_CXX_RUNTIME` | `static-libc++` (default), `libc++` (dynamic — for distro packages that must share the system runtime), `libstdc++` (escape hatch for a rebuilt engine), `none` (add no C++ runtime — for an engine that already carries its own) |
+
+Every build records which path it took — `forge doctor`'s `needle engine`
+line prints it: `pinned` (downloaded, checksum-verified), `local-verified`
+(`NEEDLE_LIB_DIR`/`vendor/` holding the pinned bytes), `local-unverified` (a
+local engine that is *not* a pinned artifact — linked as asked, labelled as
+such), or `none` with the reason. The same line reports the CPU: a linked
+engine runs only on a CPU that meets its measured floor (x86_64: SSE2;
+aarch64: NEON); the engine picks its own AVX2/AVX-512/VNNI or dotprod kernels,
+and a CPU without them gets the portable (much slower) kernels. Below the
+floor forge refuses the engine and routes with static rules, saying why.
 
 `needle.h` is committed as the contract of record — `needle-sys` hand-writes
 its six `extern "C"` declarations rather than generating them (no `bindgen`, so

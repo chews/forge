@@ -22,9 +22,13 @@ model.
 cargo install --locked --git https://github.com/auser/forge forge-cli
 ```
 
-The on-device engine links by default on macOS/Linux arm64 (fetched and
-checksum-verified at build time). Other platforms build engine-less and
-route with static rules — `forge doctor` says which you have. Prebuilt
+The on-device engine links by default on macOS/Linux arm64 and on x86_64
+Linux (fetched and checksum-verified at build time; x86_64 Linux also needs
+LLVM's libc++ 21+, see
+[Embedded Needle brain](docs/reference.md#embedded-needle-brain)). Other
+platforms build engine-less and route with static rules — `forge doctor` says
+which you have, which resolution path the build took, and what your CPU means
+for the engine. Prebuilt
 binaries and an install script are in
 [Installation](docs/reference.md#installation).
 
