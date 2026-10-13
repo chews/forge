@@ -32,6 +32,28 @@ for the engine. Prebuilt
 binaries and an install script are in
 [Installation](docs/reference.md#installation).
 
+### Through a local model proxy
+
+Running a Claude/OpenAI-compatible proxy on this machine (or tunnelled to it)?
+`forge proxy` sends every model request there, and keeps subscription
+credentials out of reach:
+
+```bash
+forge proxy init                       # once: write the proxy's [models], local_only, [proxy]
+forge proxy doctor                     # URL, reachability, dialects, isolation, needle
+forge proxy                            # chat
+forge proxy run "fix the failing test" # one-shot
+forge proxy --model sonnet run "…"     # any forge command and flags pass through
+```
+
+`init` discovers models from `GET {url}/v1/models` (Anthropic-dialect entries
+use the URL without `/v1`, OpenAI-dialect ones with it), is idempotent, and
+keeps the rest of your config. The URL comes from `--url`, then
+`$FORGE_PROXY_URL`, then `[proxy] url`, then `http://127.0.0.1:8001`; the
+client key from `$FORGE_PROXY_API_KEY` (default `dummy`). For a proxy on
+another host, tunnel it first: `ssh -N -L 8001:127.0.0.1:8001 host`. Details:
+[Through a local proxy](docs/reference.md#through-a-local-proxy-forge-proxy).
+
 ## Quickstart
 
 One-command quickstart (recommended):

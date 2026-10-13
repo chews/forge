@@ -151,7 +151,15 @@ pub async fn collect_checks(ctx: &Context) -> Result<Vec<Check>, ForgeError> {
     }
 
     // Credential detection summary (sources only, never values).
-    {
+    if forge_config::proxy_mode() {
+        checks.push(Check {
+            level: Level::Ok,
+            label: "credentials".into(),
+            detail: "subscription and provider-key discovery disabled by `forge proxy`; \
+                     models authenticate with the proxy key only"
+                .into(),
+        });
+    } else {
         let probes = forge_providers::probe_auth();
         let detected: Vec<String> = probes
             .iter()
@@ -183,6 +191,17 @@ pub async fn collect_checks(ctx: &Context) -> Result<Vec<Check>, ForgeError> {
         checks.push(Check {
             level,
             label: "credentials".into(),
+            detail,
+        });
+    }
+
+    // `forge proxy`: URL, reachability, dialects, and (inside it) isolation.
+    for (level, label, detail) in
+        crate::commands::proxy_cmd::doctor_rows(resolved.as_ref().ok().map(|r| &r.config)).await
+    {
+        checks.push(Check {
+            level,
+            label: label.into(),
             detail,
         });
     }

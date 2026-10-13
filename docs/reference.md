@@ -805,6 +805,14 @@ forge skill list|show|test
 forge router serve [--host --port]  Run the local Laya decision-router adapter
 forge model list|test
 forge config show|path|explain <key>
+forge proxy init [--url U] [--key-env N] [--models a,b]
+                                    Write the local proxy's [models] entries,
+                                    [proxy], local_only and router_escalate
+forge proxy [--url U] [--key-env N] [forge args…]
+                                    Run any forge command through the proxy with
+                                    subscription credentials hidden (`forge proxy`
+                                    alone is chat; `forge proxy -- init` runs
+                                    `forge init` itself)
 forge doctor [--live]               Environment/config health check (--live adds
                                     a real canary run: what answered, which router
                                     decided, whether Jev escalation fired, latency)
@@ -1023,6 +1031,79 @@ Forge uses your existing credentials, in this order:
 `forge auth status` shows what was detected — provider, usable models, source,
 and kind (api-key/oauth) — never any values. `forge doctor` summarizes the
 same in one line.
+
+### Through a local proxy (`forge proxy`)
+
+When a local proxy holds the real credentials — for example a ccproxy serving
+Anthropic `POST /v1/messages` and OpenAI `POST /v1/chat/completions` /
+`POST /v1/responses` on `127.0.0.1:8001`, accepting any client key — run
+forge through it:
+
+```bash
+forge proxy init                     # once per machine
+forge proxy doctor
+forge proxy                          # chat
+forge proxy run "task"
+forge proxy --model claude-opus-5 run "task"
+```
+
+**`forge proxy init [--url URL] [--key-env NAME] [--models a,b,…]`** edits the
+user config (`$XDG_CONFIG_HOME/forge/config.toml`) in place — every other key,
+table and comment kept, and a second run changes nothing. It writes
+`local_only = true`, `router_escalate = "off"`, a `[proxy]` section (`url`,
+`key_env`), `model` (only if the file has none), and one `[models.<id>]` entry
+per model:
+
+- **Anthropic dialect** for `claude-*` ids: `provider = "anthropic"`,
+  `base_url = URL` (no `/v1` — forge appends `/v1/messages`).
+- **OpenAI dialect** for bare aliases (`sonnet`, `opus`, …): `base_url =
+  URL/v1`. The entry name is the wire model id, so one id gets one dialect.
+
+The list comes from `GET {URL}/v1/models` — the newest `claude-<family>-…` per
+family plus the bare aliases — or, if the proxy is unreachable, a built-in
+default (`claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`; `opus`,
+`sonnet`, `haiku`). `--models` writes exactly the ids given. Existing entries
+of the same name keep their own description and capability keys; only
+`provider`, `base_url` and `key_env` are set.
+
+**Settings precedence:** flags (`--url`, `--key-env`) > environment
+(`FORGE_PROXY_URL`; the key from the `key_env` variable, then
+`FORGE_PROXY_API_KEY`, default `dummy`) > `[proxy]` > `http://127.0.0.1:8001`.
+The URL must be on this machine; for a proxy elsewhere, tunnel it
+(`ssh -N -L 8001:127.0.0.1:8001 host`) and point forge at the tunnel.
+
+**`forge proxy [forge args…]`** re-runs forge (`current_exe()`) with:
+
+- `HOME` → `~/.forge-home` (created `0700`), so no home-relative credential
+  store exists for anything in the process tree; `XDG_CONFIG_HOME` → the real
+  config dir (so the proxied forge reads the config `init` wrote);
+  `CARGO_HOME`/`RUSTUP_HOME` kept pointing at the real toolchains;
+- every `ANTHROPIC_*`, `CLAUDE_*`, `OPENAI_*`, `CODEX_*`, `MOONSHOT_*`, `KIMI_*`,
+  `DEEPSEEK_*`, `OPENROUTER_*`, `TYPESAFE_*` variable and forge's own endpoint
+  redirects (`FORGE_MODEL_BASE_URL`, `FORGE_ROUTER_URL`, `FORGE_JEV_*`, …)
+  removed;
+- `PATH` without the real home's directories or any directory holding a
+  `claude`, `codex` or `kimi` CLI;
+- the client key exported under `key_env`, and `FORGE_PROXY_MODE=1`.
+
+Inside that process forge also enforces it itself: credential resolution uses
+only a model entry's own `key_env` (no `~/.claude`, `~/.codex`, `~/.kimi-code`
+or Keychain read, whatever `HOME` is); `local_only = true` and
+`router_escalate = "off"` are pinned over every config layer and flag
+(`forge config explain local_only` reports `proxy`); every entry reading the
+proxy's `key_env` is pointed at the resolved URL; `.env` files cannot restore
+a cleared variable; `forge auth login` refuses. Global flags work before or
+after `proxy`; `forge proxy init` is the proxy's own subcommand, and
+`forge proxy -- init` runs `forge init` through the proxy.
+
+`forge doctor` reports a `proxy` line (URL and where it came from,
+reachability, the dialects the proxy answers — probed with a bodiless `GET`,
+which a POST-only route answers `405`, nothing forwarded upstream — and how
+many entries use it); inside `forge proxy` it adds `proxy isolation`, which
+fails if `HOME` is the real home, a cleared variable is set, or a subscription
+CLI is on `PATH`. Not a sandbox: like `local_only`, it constrains forge's own
+requests and credential lookups; a tool command the agent runs with an
+absolute path is still governed by the approval policy, not by this.
 
 The built-in subscription models are `claude-sonnet` (Anthropic Messages),
 `gpt-5.6-sol` (Codex Responses), and `k3` (Kimi Code). Forge reads token
